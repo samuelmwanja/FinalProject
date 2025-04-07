@@ -7,6 +7,10 @@ interface AnalysisResult {
   total_comments: number;
   retrieved_comments: number;
   spam_comments: number;
+  top_level_comments?: number;
+  reply_comments?: number;
+  top_level_spam?: number;
+  reply_spam?: number;
   recent_spam: YouTubeComment[];
   recent_non_spam: YouTubeComment[];
   data_source: string;
@@ -60,6 +64,10 @@ const YouTubeCommentAnalyzer: React.FC = () => {
         total_comments: response.total_comments || 0,
         retrieved_comments: response.analyzed_comments || 0,
         spam_comments: response.spam_comments || 0,
+        top_level_comments: response.top_level_comments || 0,
+        reply_comments: response.reply_comments || 0,
+        top_level_spam: response.top_level_spam || 0,
+        reply_spam: response.reply_spam || 0,
         recent_spam: response.recent_spam?.map(comment => ({
           id: comment.text.substring(0, 8), // Generate an ID since our mock data doesn't have one
           text: comment.text,
@@ -208,11 +216,21 @@ const YouTubeCommentAnalyzer: React.FC = () => {
               <div className="bg-gray-50 p-4 rounded shadow-sm border border-gray-200">
                 <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Retrieved</h3>
                 <p className="mt-1 text-2xl font-semibold text-blue-600">{result.retrieved_comments.toLocaleString()}</p>
+                {result.top_level_comments !== undefined && result.reply_comments !== undefined && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    {result.top_level_comments.toLocaleString()} top-level, {result.reply_comments.toLocaleString()} replies
+                  </p>
+                )}
               </div>
               
               <div className="bg-gray-50 p-4 rounded shadow-sm border border-gray-200">
                 <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Spam Comments</h3>
                 <p className="mt-1 text-2xl font-semibold text-red-600">{result.spam_comments.toLocaleString()}</p>
+                {result.top_level_spam !== undefined && result.reply_spam !== undefined && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    {result.top_level_spam.toLocaleString()} in top-level, {result.reply_spam.toLocaleString()} in replies
+                  </p>
+                )}
               </div>
               
               <div className="bg-gray-50 p-4 rounded shadow-sm border border-gray-200">

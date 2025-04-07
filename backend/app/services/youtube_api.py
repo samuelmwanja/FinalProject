@@ -13,7 +13,7 @@ class YouTubeAPI:
     
     def get_video_comments(self, video_id: str, max_results: Optional[int] = None) -> List[Dict[str, Any]]:
         """
-        Fetch comments for a specific video ID with unlimited pagination
+        Fetch comments for a specific video ID with unlimited pagination, including replies
         
         Args:
             video_id: YouTube video ID
@@ -32,14 +32,15 @@ class YouTubeAPI:
             # Continue fetching pages until there are no more
             while True:
                 page_count += 1
-                print(f"Fetching page {page_count}, comments so far: {len(comments)}")
+                print(f"Fetching page {page_count} of comments, total so far: {len(comments)}")
                 
-                # Make API request
+                # Make API request for top-level comments
                 request = self.youtube.commentThreads().list(
-                    part="snippet",
+                    part="snippet,replies",  # Add 'replies' to get reply data
                     videoId=video_id,
                     maxResults=100,  # API max per page
-                    pageToken=next_page_token if next_page_token else None
+                    pageToken=next_page_token if next_page_token else None,
+                    textFormat="plainText"
                 )
                 response = request.execute()
                 
@@ -48,24 +49,43 @@ class YouTubeAPI:
                 if not items:
                     print("No comments returned in this page")
                     break
+                
+                for item in items:
+                    # Get top-level comment
+                    top_level_comment = item['snippet']['topLevelComment']['snippet']
+                    comments.append({
+                        'id': item.get('id', ''),
+                        'text': top_level_comment.get('textDisplay', ''),
+                        'author': top_level_comment.get('authorDisplayName', ''),
+                        'author_profile_image': top_level_comment.get('authorProfileImageUrl', ''),
+                        'author_channel_url': top_level_comment.get('authorChannelUrl', ''),
+                        'like_count': top_level_comment.get('likeCount', 0),
+                        'published_at': top_level_comment.get('publishedAt', ''),
+                        'is_reply': False,
+                        'parent_id': None
+                    })
                     
-                for item in response.get('items', []):
-                    snippet = item.get('snippet', {}).get('topLevelComment', {}).get('snippet', {})
-                    if snippet:
-                        comments.append({
-                            'id': item.get('id', ''),
-                            'text': snippet.get('textDisplay', ''),
-                            'author': snippet.get('authorDisplayName', ''),
-                            'author_profile_image': snippet.get('authorProfileImageUrl', ''),
-                            'author_channel_url': snippet.get('authorChannelUrl', ''),
-                            'like_count': snippet.get('likeCount', 0),
-                            'published_at': snippet.get('publishedAt', '')
-                        })
+                    # Get replies if there are any
+                    reply_count = item['snippet'].get('totalReplyCount', 0)
+                    if reply_count > 0 and 'replies' in item:
+                        for reply in item['replies']['comments']:
+                            reply_snippet = reply['snippet']
+                            comments.append({
+                                'id': reply.get('id', ''),
+                                'text': reply_snippet.get('textDisplay', ''),
+                                'author': reply_snippet.get('authorDisplayName', ''),
+                                'author_profile_image': reply_snippet.get('authorProfileImageUrl', ''),
+                                'author_channel_url': reply_snippet.get('authorChannelUrl', ''),
+                                'like_count': reply_snippet.get('likeCount', 0),
+                                'published_at': reply_snippet.get('publishedAt', ''),
+                                'is_reply': True,
+                                'parent_id': item.get('id', '')
+                            })
                 
                 # Check if we've reached the max_results limit (if specified)
                 if max_results is not None and len(comments) >= max_results:
                     print(f"Reached specified limit of {max_results} comments")
-                    break
+                    return comments[:max_results]
                     
                 # Get next page token
                 next_page_token = response.get('nextPageToken')
@@ -78,7 +98,7 @@ class YouTubeAPI:
                 # Add a small delay to avoid rate limiting
                 time.sleep(0.3)
             
-            print(f"Successfully fetched {len(comments)} comments for video {video_id}")
+            print(f"Successfully fetched {len(comments)} comments (including replies) for video {video_id}")
             return comments
             
         except HttpError as e:

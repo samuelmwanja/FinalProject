@@ -139,6 +139,10 @@ export interface YouTubeAnalysisResponse {
   analyzed_comments?: number;
   ml_classified_count?: number;
   rule_classified_count?: number;
+  top_level_comments?: number;
+  reply_comments?: number;
+  top_level_spam?: number;
+  reply_spam?: number;
   
   // Legacy fields for backward compatibility
   total_comments?: number;
@@ -151,6 +155,8 @@ export interface YouTubeAnalysisResponse {
     risk_level: string;
     is_spam: boolean;
     method: string;
+    is_reply?: boolean;
+    parent_id?: string;
   }>;
   recent_non_spam?: Array<{
     text: string;
@@ -160,6 +166,8 @@ export interface YouTubeAnalysisResponse {
     risk_level: string;
     is_spam: boolean;
     method: string;
+    is_reply?: boolean;
+    parent_id?: string;
   }>;
   classifier_method?: string;
   data_source?: string;

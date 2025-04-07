@@ -416,7 +416,7 @@ YOUTUBE_API_KEY = "AIzaSyAkIjS_Z02y-9Cclgv4EgtFFK0CcRa1mcg"
 
 # Function to fetch real YouTube comments using the API key
 def fetch_youtube_comments(video_id: str, max_comments: Optional[int] = None) -> List[Dict]:
-    """Fetch comments from YouTube API"""
+    """Fetch comments from YouTube API including replies"""
     try:
         from googleapiclient.discovery import build
         
@@ -432,9 +432,9 @@ def fetch_youtube_comments(video_id: str, max_comments: Optional[int] = None) ->
             page_count += 1
             logger.info(f"Fetching page {page_count} of comments, total so far: {len(comments)}")
             
-            # Get comments
+            # Get comments with replies
             request = youtube.commentThreads().list(
-                part="snippet",
+                part="snippet,replies",  # Include replies part
                 videoId=video_id,
                 maxResults=100,  # API maximum is 100 per page
                 textFormat="plainText",
@@ -442,19 +442,40 @@ def fetch_youtube_comments(video_id: str, max_comments: Optional[int] = None) ->
             )
             
             response = request.execute()
+            items = response.get('items', [])
             
-            for item in response.get('items', []):
-                snippet = item['snippet']['topLevelComment']['snippet']
+            if not items:
+                logger.info("No comments found on this page")
+                break
+            
+            for item in items:
+                # Extract top-level comment
+                top_comment = item['snippet']['topLevelComment']['snippet']
                 comments.append({
-                    "text": snippet.get('textDisplay', ''),
-                    "author": snippet.get('authorDisplayName', 'YouTube User'),
-                    "published_at": snippet.get('publishedAt', '')
+                    "text": top_comment.get('textDisplay', ''),
+                    "author": top_comment.get('authorDisplayName', 'YouTube User'),
+                    "published_at": top_comment.get('publishedAt', ''),
+                    "is_reply": False,
+                    "parent_id": None
                 })
+                
+                # Extract replies if there are any
+                reply_count = item['snippet'].get('totalReplyCount', 0)
+                if reply_count > 0 and 'replies' in item:
+                    for reply in item['replies']['comments']:
+                        reply_snippet = reply['snippet']
+                        comments.append({
+                            "text": reply_snippet.get('textDisplay', ''),
+                            "author": reply_snippet.get('authorDisplayName', 'YouTube User'),
+                            "published_at": reply_snippet.get('publishedAt', ''),
+                            "is_reply": True,
+                            "parent_id": item['id']
+                        })
                 
                 # Break early if we've reached the max (if specified)
                 if max_comments is not None and len(comments) >= max_comments:
                     logger.info(f"Reached specified maximum of {max_comments} comments")
-                    return comments
+                    return comments[:max_comments]
             
             # Get next page token
             next_page_token = response.get('nextPageToken')
@@ -468,7 +489,7 @@ def fetch_youtube_comments(video_id: str, max_comments: Optional[int] = None) ->
             import time
             time.sleep(0.5)
         
-        logger.info(f"Successfully fetched {len(comments)} comments from YouTube API (all available comments)")
+        logger.info(f"Successfully fetched {len(comments)} comments (including replies) from YouTube API")
         return comments
         
     except Exception as e:
@@ -567,6 +588,11 @@ async def analyze_youtube_video(request: VideoAnalysisRequest):
         
         logger.info(f"Retrieved {len(comments)} comments for analysis")
         
+        # Count top-level comments and replies
+        top_level_count = sum(1 for c in comments if not c.get('is_reply', False))
+        reply_count = sum(1 for c in comments if c.get('is_reply', False))
+        logger.info(f"Comment breakdown: {top_level_count} top-level comments, {reply_count} replies")
+        
         # Determine if we're using real data or mock data
         using_real_data = YOUTUBE_API_KEY and len(comments) > 0 and comments[0].get('author') != 'YouTube User'
         
@@ -575,6 +601,10 @@ async def analyze_youtube_video(request: VideoAnalysisRequest):
         spam_count = 0
         rule_based_count = 0
         ml_based_count = 0
+        
+        # Track spam in top-level comments and replies separately
+        top_level_spam = 0
+        reply_spam = 0
         
         logger.info(f"Starting classification of {len(comments)} comments")
         for comment in comments:
@@ -585,6 +615,8 @@ async def analyze_youtube_video(request: VideoAnalysisRequest):
             result["text"] = comment["text"]
             result["author"] = comment.get("author", "YouTube User")
             result["published_at"] = comment.get("published_at", datetime.datetime.now().isoformat())
+            result["is_reply"] = comment.get("is_reply", False)
+            result["parent_id"] = comment.get("parent_id")
             
             # Track classification method counts
             if result["method"] == "ml-model":
@@ -595,6 +627,11 @@ async def analyze_youtube_video(request: VideoAnalysisRequest):
             # Count spam comments
             if result["is_spam"]:
                 spam_count += 1
+                # Increment the appropriate counter
+                if result["is_reply"]:
+                    reply_spam += 1
+                else:
+                    top_level_spam += 1
                 
             classified_comments.append(result)
         
@@ -609,6 +646,7 @@ async def analyze_youtube_video(request: VideoAnalysisRequest):
         # Log classification stats
         logger.info(f"Classification complete: {ml_based_count} ML-based, {rule_based_count} rule-based")
         logger.info(f"Total comments: {len(comments)}, Spam detected: {spam_count}")
+        logger.info(f"Spam breakdown: {top_level_spam} in top-level comments, {reply_spam} in replies")
         
         # Calculate spam rate
         spam_rate = (spam_count / len(comments)) * 100 if comments else 0
@@ -624,7 +662,11 @@ async def analyze_youtube_video(request: VideoAnalysisRequest):
             "title": video_details["title"],
             "total_comments": video_details["comment_count"],
             "analyzed_comments": len(comments),
+            "top_level_comments": top_level_count,
+            "reply_comments": reply_count, 
             "spam_comments": spam_count,
+            "top_level_spam": top_level_spam,
+            "reply_spam": reply_spam,
             "spam_rate": round(spam_rate, 1),
             "classifier_method": "ml-model" if ml_based_count > rule_based_count else "rule-based",
             "ml_classified_count": ml_based_count,
