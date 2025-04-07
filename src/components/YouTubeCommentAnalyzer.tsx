@@ -37,9 +37,9 @@ const YouTubeCommentAnalyzer: React.FC = () => {
     console.log('Submitting request to analyze YouTube URL:', videoUrl);
     
     try {
-      // Use the improved API client
+      // Use the improved API client to fetch all comments (no max limit)
       console.log('Calling analyzeYouTubeVideo with URL:', videoUrl);
-      const response = await analyzeYouTubeVideo(videoUrl);
+      const response = await analyzeYouTubeVideo(videoUrl); // No max_comments means fetch all
       console.log('Received API response:', response);
       
       if (response.error) {
@@ -63,14 +63,23 @@ const YouTubeCommentAnalyzer: React.FC = () => {
         recent_spam: response.recent_spam?.map(comment => ({
           id: comment.text.substring(0, 8), // Generate an ID since our mock data doesn't have one
           text: comment.text,
-          author: "YouTube User", // Mock author since our server doesn't provide this
-          published_at: new Date().toISOString(), // Mock date since our server doesn't provide this
+          author: comment.author || "YouTube User",
+          published_at: comment.published_at || new Date().toISOString(),
           spam_probability: comment.spam_probability || 0,
           risk_level: comment.risk_level || "low",
           method: comment.method || "ml-model",
           is_spam: comment.is_spam || false
         })) || [],
-        recent_non_spam: [], // Our server currently only returns spam comments
+        recent_non_spam: response.recent_non_spam?.map(comment => ({
+          id: comment.text.substring(0, 8), // Generate an ID 
+          text: comment.text,
+          author: comment.author || "YouTube User",
+          published_at: comment.published_at || new Date().toISOString(),
+          spam_probability: comment.spam_probability || 0,
+          risk_level: comment.risk_level || "low",
+          method: comment.method || "ml-model",
+          is_spam: comment.is_spam || false
+        })) || [],
         data_source: response.data_source || 'mock_data',
         classifier_method: response.classifier_method || 'ml-model',
         warning: response.warning || (response.data_source === 'mock_data' ? 'Using mock data for this demo' : undefined)

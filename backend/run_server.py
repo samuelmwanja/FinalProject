@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # Define models
 class VideoAnalysisRequest(BaseModel):
     video_url: str
-    max_comments: Optional[int] = 100
+    max_comments: Optional[int] = None  # None means fetch all available comments
 
 # Custom JSON encoder for NumPy types
 class NumpyEncoder(json.JSONEncoder):
@@ -244,20 +244,35 @@ def load_model():
     """Load the spam classifier model and vectorizer"""
     try:
         # Model paths
-        model_path = "/Users/samuel/Documents/toDO/spam_classifier_model.pkl"
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(current_dir) if os.path.basename(current_dir) == 'backend' else current_dir
         
-        # Try to find vectorizer in the same directory
-        vectorizer_path = "/Users/samuel/Documents/toDO/count_vectorizer.pkl"
+        model_path = os.path.join(project_root, "spam_classifier_model.pkl")
+        vectorizer_path = os.path.join(project_root, "count_vectorizer.pkl")
+        
+        # Log the paths we're looking at
+        logger.info(f"Looking for model at: {model_path}")
+        logger.info(f"Looking for vectorizer at: {vectorizer_path}")
         
         # Check if model file exists
         if not os.path.exists(model_path):
             logger.error(f"Model file not found at {model_path}")
-            return None, None
+            # Try absolute path as fallback
+            model_path = "/Users/samuel/Documents/toDO/spam_classifier_model.pkl"
+            logger.info(f"Trying alternate model path: {model_path}")
+            if not os.path.exists(model_path):
+                logger.error(f"Model file not found at alternate path")
+                return None, None
             
         # Check if vectorizer file exists
         if not os.path.exists(vectorizer_path):
             logger.error(f"Vectorizer file not found at {vectorizer_path}")
-            return None, None
+            # Try absolute path as fallback
+            vectorizer_path = "/Users/samuel/Documents/toDO/count_vectorizer.pkl"
+            logger.info(f"Trying alternate vectorizer path: {vectorizer_path}")
+            if not os.path.exists(vectorizer_path):
+                logger.error(f"Vectorizer file not found at alternate path")
+                return None, None
         
         # Load model
         logger.info(f"Loading model from {model_path}")
@@ -269,11 +284,25 @@ def load_model():
         with open(vectorizer_path, 'rb') as f:
             vectorizer = pickle.load(f)
             
+        # Verify the model loaded correctly
+        if model is None:
+            logger.error("Model loaded as None")
+            return None, None
+            
+        if vectorizer is None:
+            logger.error("Vectorizer loaded as None")
+            return None, None
+            
         logger.info(f"Model and vectorizer loaded successfully")
+        logger.info(f"Model type: {type(model).__name__}")
+        logger.info(f"Vectorizer type: {type(vectorizer).__name__}")
+        
         return model, vectorizer
         
     except Exception as e:
         logger.error(f"Error loading model: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None, None
 
 # Classify text using model or fallback to rule-based classification
@@ -386,41 +415,67 @@ def classify_spam(text, model=None, vectorizer=None):
 YOUTUBE_API_KEY = "AIzaSyAkIjS_Z02y-9Cclgv4EgtFFK0CcRa1mcg"
 
 # Function to fetch real YouTube comments using the API key
-def fetch_youtube_comments(video_id: str, max_comments: int = 100) -> List[Dict]:
+def fetch_youtube_comments(video_id: str, max_comments: Optional[int] = None) -> List[Dict]:
     """Fetch comments from YouTube API"""
     try:
         from googleapiclient.discovery import build
         
-        logger.info(f"Fetching YouTube comments for video ID: {video_id}")
+        logger.info(f"Fetching YouTube comments for video ID: {video_id}, max_comments: {'all' if max_comments is None else max_comments}")
         youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
         
-        # Get comments
-        request = youtube.commentThreads().list(
-            part="snippet",
-            videoId=video_id,
-            maxResults=min(max_comments, 100),
-            textFormat="plainText"
-        )
-        
-        response = request.execute()
-        
         comments = []
-        for item in response.get('items', []):
-            snippet = item['snippet']['topLevelComment']['snippet']
-            comments.append({
-                "text": snippet.get('textDisplay', ''),
-                "author": snippet.get('authorDisplayName', 'YouTube User'),
-                "published_at": snippet.get('publishedAt', '')
-            })
+        next_page_token = None
+        page_count = 0
+        
+        # Loop to get ALL pages of comments (or up to max_comments if specified)
+        while True:
+            page_count += 1
+            logger.info(f"Fetching page {page_count} of comments, total so far: {len(comments)}")
             
-        logger.info(f"Successfully fetched {len(comments)} comments from YouTube API")
+            # Get comments
+            request = youtube.commentThreads().list(
+                part="snippet",
+                videoId=video_id,
+                maxResults=100,  # API maximum is 100 per page
+                textFormat="plainText",
+                pageToken=next_page_token
+            )
+            
+            response = request.execute()
+            
+            for item in response.get('items', []):
+                snippet = item['snippet']['topLevelComment']['snippet']
+                comments.append({
+                    "text": snippet.get('textDisplay', ''),
+                    "author": snippet.get('authorDisplayName', 'YouTube User'),
+                    "published_at": snippet.get('publishedAt', '')
+                })
+                
+                # Break early if we've reached the max (if specified)
+                if max_comments is not None and len(comments) >= max_comments:
+                    logger.info(f"Reached specified maximum of {max_comments} comments")
+                    return comments
+            
+            # Get next page token
+            next_page_token = response.get('nextPageToken')
+            
+            # If there's no next page, exit the loop
+            if not next_page_token:
+                logger.info(f"No more pages of comments available")
+                break
+            
+            # Add a small delay to avoid rate limiting
+            import time
+            time.sleep(0.5)
+        
+        logger.info(f"Successfully fetched {len(comments)} comments from YouTube API (all available comments)")
         return comments
         
     except Exception as e:
         logger.error(f"Error fetching YouTube comments: {str(e)}")
         logger.info("Falling back to mock comments")
         # Fall back to mock comments if there's an error
-        return get_mock_comments(video_id, max_comments)
+        return get_mock_comments(video_id, max_comments or 100)
 
 # Function to get video details from YouTube API
 def get_video_details(video_id: str) -> Dict:
@@ -491,48 +546,76 @@ async def analyze_youtube_video(request: VideoAnalysisRequest):
         if not video_id:
             return {"error": "Could not extract video ID from URL"}
         
+        # Load ML model and vectorizer first to ensure we're using ML-based classification
+        logger.info("Loading ML model for analysis")
+        model, vectorizer = load_model()
+        
+        # Log whether we're using ML or rule-based approach
+        using_ml = model is not None and vectorizer is not None
+        logger.info(f"Using ML model for classification: {using_ml}")
+        
+        if not using_ml:
+            logger.warning("ML model could not be loaded, falling back to rule-based classification")
+        
         # Get video details (real data from YouTube API)
         video_details = get_video_details(video_id)
         
         # Get comments (real data from YouTube API)
+        # Pass along the max_comments parameter (None means all comments)
+        logger.info(f"Requesting analysis for {'all' if request.max_comments is None else request.max_comments} comments from video {video_id}")
         comments = fetch_youtube_comments(video_id, request.max_comments)
+        
+        logger.info(f"Retrieved {len(comments)} comments for analysis")
         
         # Determine if we're using real data or mock data
         using_real_data = YOUTUBE_API_KEY and len(comments) > 0 and comments[0].get('author') != 'YouTube User'
         
-        # Load ML model and vectorizer
-        model, vectorizer = load_model()
-        
-        # Track if we're using the ML model or rule-based approach
-        using_ml = model is not None and vectorizer is not None
-        
         # Classify each comment
         classified_comments = []
         spam_count = 0
+        rule_based_count = 0
+        ml_based_count = 0
         
+        logger.info(f"Starting classification of {len(comments)} comments")
         for comment in comments:
+            # Classify the comment text
             result = classify_spam(comment["text"], model, vectorizer)
+            
+            # Add comment metadata
             result["text"] = comment["text"]
             result["author"] = comment.get("author", "YouTube User")
             result["published_at"] = comment.get("published_at", datetime.datetime.now().isoformat())
-            classified_comments.append(result)
             
+            # Track classification method counts
+            if result["method"] == "ml-model":
+                ml_based_count += 1
+            else:
+                rule_based_count += 1
+                
+            # Count spam comments
             if result["is_spam"]:
                 spam_count += 1
+                
+            classified_comments.append(result)
+        
+        # Split comments into spam and non-spam
+        spam_comments = [comment for comment in classified_comments if comment["is_spam"]]
+        non_spam_comments = [comment for comment in classified_comments if not comment["is_spam"]]
+        
+        # Sort both by spam probability (highest first for spam, lowest first for non-spam)
+        spam_comments.sort(key=lambda x: x["spam_probability"], reverse=True)
+        non_spam_comments.sort(key=lambda x: x["spam_probability"])
+        
+        # Log classification stats
+        logger.info(f"Classification complete: {ml_based_count} ML-based, {rule_based_count} rule-based")
+        logger.info(f"Total comments: {len(comments)}, Spam detected: {spam_count}")
         
         # Calculate spam rate
         spam_rate = (spam_count / len(comments)) * 100 if comments else 0
         
-        # Sort by spam probability (highest first)
-        classified_comments.sort(key=lambda x: x["spam_probability"], reverse=True)
-        
-        # Get top spam comments
-        top_spam_comments = [comment for comment in classified_comments[:5] 
-                             if comment["spam_probability"] > 0.4]
-        
-        # If no spam found, show top comments with highest probabilities
-        if not top_spam_comments and classified_comments:
-            top_spam_comments = classified_comments[:5]
+        # Get all comments for display, sorted by spam probability
+        all_classified_comments = classified_comments.copy()
+        all_classified_comments.sort(key=lambda x: x["spam_probability"], reverse=True)
         
         # Prepare result
         result = {
@@ -543,8 +626,12 @@ async def analyze_youtube_video(request: VideoAnalysisRequest):
             "analyzed_comments": len(comments),
             "spam_comments": spam_count,
             "spam_rate": round(spam_rate, 1),
-            "classifier_method": "ml-model" if using_ml else "rule-based",
-            "recent_spam": top_spam_comments,
+            "classifier_method": "ml-model" if ml_based_count > rule_based_count else "rule-based",
+            "ml_classified_count": ml_based_count,
+            "rule_classified_count": rule_based_count,
+            "recent_spam": spam_comments,
+            "recent_non_spam": non_spam_comments[:50],  # Return top 50 non-spam comments too
+            "comments": all_classified_comments,
             "data_source": "youtube_api" if using_real_data else "mock_data"
         }
         

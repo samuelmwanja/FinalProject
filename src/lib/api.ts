@@ -137,12 +137,16 @@ export interface YouTubeAnalysisResponse {
   
   // Fields from our new server format
   analyzed_comments?: number;
+  ml_classified_count?: number;
+  rule_classified_count?: number;
   
   // Legacy fields for backward compatibility
   total_comments?: number;
   spam_comments?: number;
   recent_spam?: Array<{
     text: string;
+    author?: string;
+    published_at?: string;
     spam_probability: number;
     risk_level: string;
     is_spam: boolean;
@@ -150,6 +154,8 @@ export interface YouTubeAnalysisResponse {
   }>;
   recent_non_spam?: Array<{
     text: string;
+    author?: string;
+    published_at?: string;
     spam_probability: number;
     risk_level: string;
     is_spam: boolean;
@@ -175,9 +181,9 @@ interface FlaskYouTubeComment {
 }
 
 // YouTube Video Analysis
-export async function analyzeYouTubeVideo(videoUrl: string): Promise<YouTubeAnalysisResponse> {
+export async function analyzeYouTubeVideo(videoUrl: string, maxComments?: number): Promise<YouTubeAnalysisResponse> {
   try {
-    console.log(`Sending analysis request for URL: ${videoUrl}`);
+    console.log(`Sending analysis request for URL: ${videoUrl} with max_comments: ${maxComments === undefined ? 'all' : maxComments}`);
     
     // Use our FastAPI endpoint on port 7777
     const apiUrl = `http://localhost:7777/api/v1/youtube/analyze`;
@@ -190,7 +196,7 @@ export async function analyzeYouTubeVideo(videoUrl: string): Promise<YouTubeAnal
       },
       body: JSON.stringify({ 
         video_url: videoUrl, 
-        max_comments: 100 
+        max_comments: maxComments 
       }),
       credentials: 'omit', // Don't send cookies for cross-origin requests
       mode: 'cors',       // Explicitly request CORS mode
